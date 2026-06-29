@@ -18,13 +18,14 @@ class _LogEntryBase(SQLModel):
     timestamp: datetime
     original_timestamp: datetime | None = None
     level: LoggingLevel
+    task: str | None = None
     message: str
     imei: str
     timestamp_is_valid: bool # in case the Modem failed to sync time with network
     upload_timestamp: datetime
 
     def __str__(self):
-        return f"[{self.timestamp.isoformat()}][{self.level.value}] {self.message}"
+        return f"[{self.timestamp.isoformat()}][{self.level.value}]{f'[{self.task}]' if self.task is not None else ''} {self.message}"
 
 
 class LogEntryDB(_LogEntryBase, table=True):

@@ -6,4 +6,5 @@ class ParsedLogEntry:
     original_timestamp: datetime
     timestamp: datetime
     level: str
+    task: str | None
     message: str

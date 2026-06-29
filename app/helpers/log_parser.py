@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from app.models.dataclasses.log import ParsedLogEntry
 from app.models.log import char_to_logging_level, LoggingLevel
 
-LOG_REGEX = re.compile(r"^\[(.+)]\[(.)] (.+)$", re.MULTILINE)
+LOG_REGEX = re.compile(r"^\[(.+)]\[(.)](?:\[(.+)])? (.+)$", re.MULTILINE)
 
 
 class TimeCalibrationMessage:
@@ -82,7 +82,7 @@ def parse_log(raw_log: str) -> list[ParsedLogEntry]:
     raw_log = raw_log.replace("\r\n", "\n").replace("\r", "\n") # for regex multiline
 
     for match in LOG_REGEX.finditer(raw_log):
-        raw_timestamp, raw_level, msg = match.groups()
+        raw_timestamp, raw_level, task, msg = match.groups()
         dt_utc = parse_iso(raw_timestamp)
         level = char_to_logging_level(raw_level)
 
@@ -104,7 +104,7 @@ def parse_log(raw_log: str) -> list[ParsedLogEntry]:
                 delta = calib_millis - entry.timestamp.timestamp() * 1000.0
                 entry.timestamp = dt_utc - timedelta(milliseconds=delta)
 
-        entry = ParsedLogEntry(original_timestamp=dt_utc, timestamp=dt_utc, level=level, message=msg)
+        entry = ParsedLogEntry(original_timestamp=dt_utc, timestamp=dt_utc, level=level, task=task, message=msg)
         entries.append(entry)
 
     return entries
