@@ -50,9 +50,13 @@ async def upload_new_firmware(
     bootloader: UploadFile = File(...),
     firmware: UploadFile = File(...),
     partitions: UploadFile = File(...),
-    overwrite_existing: bool = False
+    overwrite_existing: bool = False,
 ):
-    if not overwrite_existing and session.exec(select(FirmwareDB).where(FirmwareDB.version == version)).first():
+    existing = session.exec(
+        select(FirmwareDB).where(FirmwareDB.version == version)
+    ).first()
+
+    if existing and not overwrite_existing:
         raise HTTPException(400, "Firmware already exists")
 
     bootloader_bytes = await bootloader.read()
@@ -62,15 +66,22 @@ async def upload_new_firmware(
     if not bootloader_bytes or not firmware_bytes or not partitions_bytes:
         raise HTTPException(400, "One or more files are empty")
 
-    db_firmware = FirmwareDB(
-        version=version,
-        bootloader=bootloader_bytes,
-        firmware=firmware_bytes,
-        partitions=partitions_bytes,
-    )
+    if existing:
+        db_firmware = existing
+        db_firmware.bootloader = bootloader_bytes
+        db_firmware.firmware = firmware_bytes
+        db_firmware.partitions = partitions_bytes
+    else:
+        db_firmware = FirmwareDB(
+            version=version,
+            bootloader=bootloader_bytes,
+            firmware=firmware_bytes,
+            partitions=partitions_bytes,
+        )
 
     session.add(db_firmware)
     session.commit()
+    session.refresh(db_firmware)
 
     return db_firmware
 
