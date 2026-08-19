@@ -50,8 +50,9 @@ async def upload_new_firmware(
     bootloader: UploadFile = File(...),
     firmware: UploadFile = File(...),
     partitions: UploadFile = File(...),
+    overwrite_existing: bool = False
 ):
-    if session.exec(select(FirmwareDB).where(FirmwareDB.version == version)).first():
+    if not overwrite_existing and session.exec(select(FirmwareDB).where(FirmwareDB.version == version)).first():
         raise HTTPException(400, "Firmware already exists")
 
     bootloader_bytes = await bootloader.read()
