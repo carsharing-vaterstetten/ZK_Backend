@@ -38,7 +38,7 @@ class TimeCalibrationMessage:
         if version == "v1.0.0":
             return V1_0_0(timestamp, level, msg)
         else:
-            raise NotImplemented()
+            raise NotImplementedError()
 
     @property
     def millis(self):
