@@ -51,6 +51,7 @@ async def upload_new_firmware(
     firmware: UploadFile = File(...),
     partitions: UploadFile = File(...),
     overwrite_existing: bool = False,
+    skip_version_check: bool = False
 ):
     existing = session.exec(
         select(FirmwareDB).where(FirmwareDB.version == version)
@@ -62,6 +63,9 @@ async def upload_new_firmware(
     bootloader_bytes = await bootloader.read()
     firmware_bytes = await firmware.read()
     partitions_bytes = await partitions.read()
+
+    if not skip_version_check and version.encode() not in firmware_bytes:
+        raise HTTPException(400, "Firmware does not specify the given version string")
 
     if not bootloader_bytes or not firmware_bytes or not partitions_bytes:
         raise HTTPException(400, "One or more files are empty")
