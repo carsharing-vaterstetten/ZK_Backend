@@ -8,3 +8,4 @@ from .gps_entry import GpsEntryDB
 from .log import LogEntryDB
 from .rfid import GpsTrackingConsentRfidUidDB, RfidUidDB
 from .vehicle import VehicleDB
+from .vehicle_location import VehicleLocation

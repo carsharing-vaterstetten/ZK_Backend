@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from app import database
+from app import vehicle_locations
 
 scheduler = BackgroundScheduler()
 scheduler.start()
@@ -18,3 +19,10 @@ def start_background_user_data_cleanup_task():
 
 def stop_background_user_data_cleanup_task():
     scheduler.remove_job("delete_user_data")
+
+
+def start_vehicle_location_gathering():
+    scheduler.add_job(vehicle_locations.fetch_locations_and_place_in_db, "interval", days=1, id="gather_vehicle_locations")
+
+def stop_vehicle_location_gathering():
+    scheduler.remove_job("gather_vehicle_locations")

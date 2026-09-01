@@ -2,7 +2,7 @@ import re
 from enum import Enum
 
 from pydantic import field_validator
-from sqlmodel import SQLModel, Field
+from sqlmodel import SQLModel, Field, Relationship
 
 license_plate_re = re.compile(r"^[A-ZÄÖÜ]{1,3}-[A-Z]{1,2}\d{1,4}$")  # For germany
 
@@ -34,3 +34,5 @@ class _VehicleBase(SQLModel):
 
 class VehicleDB(_VehicleBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
+
+    locations: list["VehicleLocation"] | None = Relationship(back_populates="vehicle")
