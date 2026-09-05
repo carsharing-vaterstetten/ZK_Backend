@@ -1,3 +1,4 @@
+import hashlib
 import re
 from datetime import datetime, timezone
 
@@ -54,11 +55,13 @@ def _firmware_meta(session: SessionDep, version: str) -> tuple[int, str]:
 
 
 def _firmware_slice(session: SessionDep, version: str, start: int, length: int) -> bytes:
-    # substr() is 1-indexed.
-    return session.execute(
+    # substr() is 1-indexed. func.substr() carries no result processor, so
+    # psycopg hands back a memoryview; bytes() keeps callers (and hashlib) on
+    # one concrete type.
+    return bytes(session.execute(
         select(func.substr(FirmwareDB.firmware, start + 1, length))
         .where(FirmwareDB.version == version)
-    ).first()[0]
+    ).first()[0])
 
 
 @router.get("/latest")
@@ -136,11 +139,16 @@ def get_latest_firmware_file(
         raise HTTPException(416, f"Range {start}-{end} is empty",
                             headers={"Content-Range": f"bytes */{total}"})
 
+    chunk = _firmware_slice(session, version, start, end - start + 1)
+
     headers["Content-Range"] = f"bytes {start}-{end}/{total}"
+    # Lets the device check each chunk on arrival and re-fetch just that range,
+    # instead of only finding out at the end that the whole image is bad.
+    headers["x-Chunk-MD5"] = hashlib.md5(chunk).hexdigest()
 
     return Response(
         status_code=206,
-        content=_firmware_slice(session, version, start, end - start + 1),
+        content=chunk,
         media_type="application/octet-stream",
         headers=headers,
     )
