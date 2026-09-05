@@ -1,8 +1,9 @@
-import hashlib
+import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Response, Depends
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.auth import auth_device
@@ -30,14 +31,65 @@ def is_newer_firmware_available(fm_version: str, session: SessionDep, device: De
     return fm_version != newer_version
 
 
+# "bytes=0-32767" or open-ended "bytes=32768-". Multi-range is deliberately
+# unsupported: the firmware never asks for one, and a 206 carrying a multipart
+# body would be silently written to flash as if it were firmware.
+_RANGE_RE = re.compile(r"^bytes=(\d+)-(\d*)$")
+
+
+def _firmware_meta(session: SessionDep, version: str) -> tuple[int, str]:
+    """Total size and MD5 of the whole image, computed in the database.
+
+    Every chunk request needs both, and pulling the blob out of Postgres just to
+    measure it would move the entire firmware per chunk.
+    """
+    # execute() rather than exec(): exec() unwraps single-column selects to
+    # scalars and leaves multi-column ones as rows, so indexing explicitly keeps
+    # both helpers reading the same way.
+    row = session.execute(
+        select(func.octet_length(FirmwareDB.firmware), func.md5(FirmwareDB.firmware))
+        .where(FirmwareDB.version == version)
+    ).first()
+    return row[0], row[1]
+
+
+def _firmware_slice(session: SessionDep, version: str, start: int, length: int) -> bytes:
+    # substr() is 1-indexed.
+    return session.execute(
+        select(func.substr(FirmwareDB.firmware, start + 1, length))
+        .where(FirmwareDB.version == version)
+    ).first()[0]
+
+
 @router.get("/latest")
 def get_latest_firmware_file(
+    request: Request,
     session: SessionDep,
     fm_version: str | None = None,
     device: DeviceDB = Depends(auth_device),
 ):
+    """Serves the pending firmware, whole or by byte range.
 
-    if fm_version is not None:
+    A device on a cellular link cannot reliably hold one connection open for the
+    ~100s a full image takes, so it asks for ~32 KiB at a time and resumes from
+    what it has already committed. Without a Range header the whole image is
+    returned as before, so older firmware keeps updating normally.
+    """
+    range_header = request.headers.get("range")
+
+    if range_header is None:
+        rng = None
+    else:
+        match = _RANGE_RE.match(range_header.strip())
+        if match is None:
+            raise HTTPException(416, f"Unsupported Range: {range_header}")
+        rng = (int(match.group(1)), int(match.group(2)) if match.group(2) else None)
+
+    # Only the opening request reports progress. Committing per chunk would turn
+    # one update into a write per chunk per device.
+    is_first = rng is None or rng[0] == 0
+
+    if fm_version is not None and is_first:
         cur_firmware = session.exec(
             select(FirmwareDB).where(FirmwareDB.version == fm_version)
         ).first()
@@ -55,16 +107,42 @@ def get_latest_firmware_file(
         print(f'Device {device.imei} HW rev {device.hw_revision} got a firmware ({pending_update.target_firmware.version}) issued, that is not compatible with its hardware!!!')
         raise no_firmware_available_exception
 
-    pending_update.update_last_downloaded = datetime.now(tz=timezone.utc)
-    session.commit()
+    if is_first:
+        pending_update.update_last_downloaded = datetime.now(tz=timezone.utc)
+        session.commit()
 
-    new_firmware: bytes = pending_update.target_firmware.firmware
+    version = pending_update.target_firmware.version
+    total, full_md5 = _firmware_meta(session, version)
+
+    # The MD5 always covers the whole image, never the chunk: the device feeds
+    # every chunk into one running digest and verifies it once at the end.
+    headers = {"x-MD5": full_md5, "Accept-Ranges": "bytes"}
+
+    if rng is None:
+        return Response(
+            status_code=200,
+            content=_firmware_slice(session, version, 0, total),
+            media_type="application/octet-stream",
+            headers=headers,
+        )
+
+    start, end = rng
+    if start >= total:
+        raise HTTPException(416, "Range starts past the end of the firmware",
+                            headers={"Content-Range": f"bytes */{total}"})
+
+    end = total - 1 if end is None else min(end, total - 1)
+    if end < start:
+        raise HTTPException(416, f"Range {start}-{end} is empty",
+                            headers={"Content-Range": f"bytes */{total}"})
+
+    headers["Content-Range"] = f"bytes {start}-{end}/{total}"
 
     return Response(
-        status_code=200,
-        content=new_firmware,
+        status_code=206,
+        content=_firmware_slice(session, version, start, end - start + 1),
         media_type="application/octet-stream",
-        headers={"x-MD5": hashlib.md5(new_firmware).hexdigest()},
+        headers=headers,
     )
 
 
